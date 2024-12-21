@@ -1,0 +1,6 @@
+aws_region = "us-east-1"
+key_name = "ec2-user" 
+instance_type = "t3.medium"
+instance_name = "Jenkins-Server"
+vpc_cidr = "10.0.0.0/16"
+subnet_cidr = "10.0.1.0/24"
