@@ -12,4 +12,5 @@ sudo systemctl start docker
 sudo systemctl enable docker
 sudo usermod -aG docker ec2-user
 sudo usermod -aG docker jenkins
+sudo yum install -y git
 sudo docker run -d --name sonarqube -p 9000:9000 sonarqube:lts-community
