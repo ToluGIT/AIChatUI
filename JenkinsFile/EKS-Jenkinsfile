@@ -10,7 +10,7 @@ pipeline {
     stages {
         stage('Checkout from Git') {
             steps {
-                git branch: 'master', url: 'https://github.com/devcloudninjas/DevOps-Projects/DevOps-Project-28/Chatbot-UI.git'
+                git branch: 'main', url: 'https://github.com/ToluGIT/AIChatUI.git'
             }
         }
         stage('Initializing Terraform') {
