@@ -44,14 +44,28 @@ pipeline{
         stage('OWASP FS SCAN') {
             steps {
                 withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
-                    dependencyCheck additionalArguments: """
-                        --scan ./ 
-                        --disableYarnAudit 
-                        --disableNodeAudit 
-                        --nvdApiKey ${NVD_API_KEY}
-                        """, 
-                        odcInstallation: 'dp-check'
-                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                    // Use configFile approach
+                    dependencyCheck(
+                        odcInstallation: 'dp-check',
+                        argProperties: """
+                            nvdApiKey=${NVD_API_KEY}
+                            scan=./
+                            disableYarnAudit=true
+                            disableNodeAudit=true
+                            format=ALL
+                            prettyPrint=true
+                            failOnCVSS=11
+                        """.stripIndent()
+                    )
+                    
+                    // Publish results
+                    dependencyCheckPublisher(
+                        pattern: '**/dependency-check-report.xml',
+                        stopBuild: false,
+                        unstableTotalAll: 0,
+                        unstableTotalHigh: 0,
+                        unstableTotalMedium: 0
+                    )
                 }
             }
         }
