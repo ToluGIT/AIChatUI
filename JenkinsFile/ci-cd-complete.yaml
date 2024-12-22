@@ -1,0 +1,188 @@
+pipeline {
+    agent any
+    
+    tools {
+        jdk 'jdk-17'
+        nodejs 'node-19'
+    }
+    
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+    
+    stages {
+        stage('Source Code Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/ToluGIT/AIChatUI.git'
+            }
+        }
+
+        stage('Node Dependencies Installation') {
+            steps {
+                sh "npm install"
+            }
+        }
+
+        stage('NPM Security Audit') {
+            steps {
+                sh '''
+                    npm audit --json > npm-audit.json || true
+                    echo "NPM Audit completed and saved to npm-audit.json"
+                '''
+            }
+        }
+
+        stage('SonarQube Code Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '''
+                        $SCANNER_HOME/bin/sonar-scanner \
+                            -Dsonar.projectName=Chatbot \
+                            -Dsonar.projectKey=Chatbot
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate Verification') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token' 
+                }
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+                    dependencyCheck(
+                        odcInstallation: 'dp-check',
+                        additionalArguments: """
+                            --scan ./ 
+                            --disableYarnAudit 
+                            --disableNodeAudit 
+                            --nvdApiKey '${NVD_API_KEY}'
+                            --format 'ALL'
+                            --prettyPrint
+                        """
+                    )
+                    dependencyCheckPublisher(
+                        pattern: '**/dependency-check-report.xml',
+                        stopBuild: false,
+                        unstableTotalHigh: 0,
+                        unstableTotalMedium: 0,
+                        unstableTotalLow: 0
+                    )
+                }
+            }
+        }
+
+        stage('Trivy File System Scan') {
+            steps {
+                sh "trivy fs . > trivyfs.json"
+            }
+        }
+
+        stage('Docker Image Build and Push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {   
+                        sh "docker build -t chatbot ."
+                        sh "docker tag chatbot toluid/aichatui:latest"
+                        sh "docker push toluid/aichatui:latest"
+                    }
+                }
+            }
+        }
+
+        stage('Trivy Container Image Scan') {
+            steps {
+                script {
+                    try {
+                        sh '''
+                            # Save scan results
+                            trivy image toluid/aichatui:latest > trivy-results.txt || true
+                            
+                            # Print findings summary but continue pipeline
+                            echo "Trivy Scan completed - See trivy-results.txt for details"
+                            if grep -i 'vulnerability' trivy-results.txt > /dev/null; then
+                                echo "Note: Vulnerabilities were found but pipeline will continue"
+                            else
+                                echo "No vulnerabilities found"
+                            fi
+                        '''
+                    } catch (Exception e) {
+                        echo "Warning: Trivy scan had an error but pipeline will continue: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        stage('Container Deployment') {
+            steps {
+                script {
+                    sh '''
+                        docker run -d --name aichatui -p 3000:3000 toluid/aichatui:latest
+                        
+                        # Wait for container to be healthy
+                        sleep 10
+                        if ! docker ps | grep -q aichatui; then
+                            echo "Container failed to start properly"
+                            docker logs aichatui
+                            exit 1
+                        fi
+                    '''
+                }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                withAWS(credentials: 'aws-key', region: 'us-east-1') {
+                    script {
+                        withKubeConfig(credentialsId: 'k8s') {
+                            sh '''
+                                # Verify kubectl configuration
+                                kubectl get nodes
+                                
+                                # Apply the deployment
+                                kubectl apply -f k8s/aichatui.yaml
+                                
+                                # Wait for deployment to be ready
+                                kubectl wait --for=condition=available deployment/aichatui --timeout=300s
+                                
+                                # Check deployment status
+                                kubectl get deployment aichatui
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                if docker ps -a | grep -q aichatui; then
+                    docker stop aichatui || true
+                    docker rm aichatui || true
+                fi
+            '''
+            archiveArtifacts artifacts: '''
+                trivy.json,
+                trivyfs.json,
+                **/dependency-check-report.xml
+            ''', allowEmptyArchive: true
+        }
+        unstable {
+            echo "Pipeline is unstable. Check scan results and test reports."
+        }
+        failure {
+            echo "Pipeline failed. Check the logs for details."
+        }
+        success {
+            echo "Pipeline completed successfully!"
+        }
+    }
+}
