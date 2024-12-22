@@ -40,6 +40,7 @@ sudo systemctl enable docker
 sudo usermod -aG docker ec2-user
 sudo usermod -aG docker jenkins
 
+sudo dnf install jq -y
 
 sudo yum install -y git
 
