@@ -3,7 +3,6 @@ properties([
         choice(choices: ['apply', 'destroy'], description: 'Select Terraform action', name: 'Terraform-Action')
     ])
 ])
-
 pipeline {
     agent any
     stages {
@@ -15,55 +14,94 @@ pipeline {
         stage('Initializing Terraform') {
             steps {
                 withAWS(credentials: 'aws-key', region: 'us-east-1') {
-                dir('EKS-TF') {
-                    script {
-                        sh 'terraform init'
+                    dir('EKS-TF') {
+                        script {
+                            sh 'terraform init'
+                        }
                     }
-                }
                 }
             }
         }
         stage('Validate Terraform Code') {
             steps {
                 withAWS(credentials: 'aws-key', region: 'us-east-1') {
-                dir('EKS-TF') {
-                    script {
-                        sh 'terraform validate'
+                    dir('EKS-TF') {
+                        script {
+                            sh 'terraform validate'
+                        }
                     }
-                }
                 }
             }
         }
         stage('Terraform Plan') {
             steps {
                 withAWS(credentials: 'aws-key', region: 'us-east-1') {
-                dir('EKS-TF') {
-                    script {
-                        sh "terraform plan"
+                    dir('EKS-TF') {
+                        script {
+                            sh "terraform plan"
+                        }
                     }
                 }
+            }
+        }
+        stage('Pre-Destroy Cleanup') {
+            when {
+                expression { params.'Terraform-Action' == 'destroy' }
+            }
+            steps {
+                withAWS(credentials: 'aws-key', region: 'us-east-1') {
+                    script {
+                        sh '''
+                            # Get cluster name from terraform output or set it directly
+                            CLUSTER_NAME="aichatui"
+                            
+                            # Update kubeconfig
+                            aws eks update-kubeconfig --name $CLUSTER_NAME --region us-east-1
+                            
+                            # Delete all LoadBalancer services
+                            echo "Deleting LoadBalancer services..."
+                            kubectl get svc --all-namespaces -o json | jq -r '.items[] | select(.spec.type == "LoadBalancer") | .metadata.name' | while read name; do
+                                kubectl delete svc $name || true
+                            done
+                            
+                            # Wait for ELB deletion
+                            echo "Waiting for ELB cleanup..."
+                            sleep 30
+                        '''
+                    }
                 }
             }
         }
         stage('Terraform Action') {
             steps {
                 withAWS(credentials: 'aws-key', region: 'us-east-1') { 
-                script {
-                    echo "${params.'Terraform-Action'}"
-                    dir('EKS-TF') {
-                        script {
-                            if (params.'Terraform-Action' == 'apply') {
-                                sh "terraform apply -auto-approve"
-                            } else if (params.'Terraform-Action' == 'destroy') {
-                                sh "terraform destroy -auto-approve"
-                            } else {
-                                error "Invalid value for Terraform-Action: ${params.'Terraform-Action'}"
+                    script {
+                        echo "${params.'Terraform-Action'}"
+                        dir('EKS-TF') {
+                            script {
+                                if (params.'Terraform-Action' == 'apply') {
+                                    sh "terraform apply -auto-approve"
+                                } else if (params.'Terraform-Action' == 'destroy') {
+                                    sh "terraform destroy -auto-approve"
+                                } else {
+                                    error "Invalid value for Terraform-Action: ${params.'Terraform-Action'}"
+                                }
                             }
                         }
                     }
                 }
-                }
             }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "Pipeline executed successfully!"
+        }
+        failure {
+            echo "Pipeline failed! Check the logs for details."
         }
     }
 }
