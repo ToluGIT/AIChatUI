@@ -1,9 +1,9 @@
 terraform {
   backend "s3" {
-    bucket         = "tetris-bucket"
+    bucket         = "my-terraform-states-ai-chat-ui"
     region         = "us-east-1"
-    key            = "Chatbot-UI/EKS-TF/terraform.tfstate"
-    dynamodb_table = "Lock-Files"
+    key            = "EKS/terraform.tfstate"
+    dynamodb_table = "terraform-locks-ai-chat-ui"
     encrypt        = true
   }
   required_version = ">=0.13.0"

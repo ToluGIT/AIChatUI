@@ -1,55 +1,28 @@
-data "aws_vpc" "vpc" {
-  filter {
-    name   = "tag:Name"
-    values = [var.vpc-name]
-  }
-}
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
 
-data "aws_internet_gateway" "igw" {
-  filter {
-    name   = "tag:Name"
-    values = [var.igw-name]
-  }
-}
+  name = var.project_name
+  cidr = var.vpc_cidr
+  azs  = local.azs
 
-data "aws_subnet" "subnet" {
-  filter {
-    name   = "tag:Name"
-    values = [var.subnet-name]
-  }
-}
+  private_subnets = [for k, v in local.azs : cidrsubnet(var.vpc_cidr, 4, k)]
+  public_subnets  = [for k, v in local.azs : cidrsubnet(var.vpc_cidr, 8, k + 48)]
+  intra_subnets   = [for k, v in local.azs : cidrsubnet(var.vpc_cidr, 8, k + 52)]
 
-data "aws_security_group" "sg-default" {
-  filter {
-    name   = "tag:Name"
-    values = [var.security-group-name]
-  }
-}
+  enable_nat_gateway   = true
+  single_nat_gateway   = true
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
-resource "aws_subnet" "public-subnet2" {
-  vpc_id                  = data.aws_vpc.vpc.id
-  cidr_block              = "10.0.2.0/24"
-  availability_zone       = "us-east-1b"
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = var.subnet-name2
-  }
-}
-
-resource "aws_route_table" "rt2" {
-  vpc_id = data.aws_vpc.vpc.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = data.aws_internet_gateway.igw.id
+  public_subnet_tags = {
+    "kubernetes.io/role/elb" = 1
   }
 
-  tags = {
-    Name = var.rt-name2
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb" = 1
+    "kubernetes.io/cluster/${var.project_name}" = "shared"
   }
-}
 
-resource "aws_route_table_association" "rt-association2" {
-  route_table_id = aws_route_table.rt2.id
-  subnet_id      = aws_subnet.public-subnet2.id
+  tags = local.tags
 }
