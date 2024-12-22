@@ -18,6 +18,14 @@ pipeline{
                 sh "npm install"
             }
         }
+        stage('NPM Audit') {
+            steps {
+                sh '''
+                    npm audit --json > npm-audit.json || true
+                    echo "NPM Audit completed and saved to npm-audit.json"
+                '''
+            }
+        }
         stage("Sonarqube Analysis "){
             steps{
                 withSonarQubeEnv('sonar-server') {
