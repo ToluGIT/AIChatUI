@@ -4,8 +4,7 @@ terraform {
     key            = "jenkins/terraform.tfstate"  
     region         = "us-east-1"             
     dynamodb_table = "terraform-locks-ai-chat-ui"            
-    encrypt        = true   
-    profile = "terra"                 
+    encrypt        = true               
   }
   required_version = ">=0.13.0"
   required_providers {
