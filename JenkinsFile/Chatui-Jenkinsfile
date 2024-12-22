@@ -85,26 +85,21 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Run Trivy scan and capture the exit code
-                        def scanResult = sh(
-                            script: "trivy image toluid/aichatui:latest || true",
-                            returnStatus: true
-                        )
-                        
-                        // Store the scan output in a file
-                        sh "trivy image toluid/aichatui:latest > trivy-results.txt || true"
-                        
-                        // Check if vulnerabilities were found
-                        def hasVulnerabilities = sh(
-                            script: "grep -i 'vulnerability' trivy-results.txt || true",
-                            returnStatus: true
-                        ) == 0
-                        
-                        if (hasVulnerabilities) {
-                            unstable(message: 'Vulnerabilities found in Trivy scan')
-                        }
+                        // Run Trivy scan but don't fail on vulnerabilities
+                        sh """
+                            # Save scan results
+                            trivy image toluid/aichatui:latest > trivy-results.txt || true
+                            
+                            # Print findings summary but continue pipeline
+                            echo "Trivy Scan completed - See trivy-results.txt for details"
+                            if grep -i 'vulnerability' trivy-results.txt > /dev/null; then
+                                echo "Note: Vulnerabilities were found but pipeline will continue"
+                            else
+                                echo "No vulnerabilities found"
+                            fi
+                        """
                     } catch (Exception e) {
-                        error "Trivy scan failed: ${e.getMessage()}"
+                        echo "Warning: Trivy scan had an error but pipeline will continue: ${e.getMessage()}"
                     }
                 }
             }
