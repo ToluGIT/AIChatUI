@@ -1,0 +1,91 @@
+name: CD Pipeline - EKS Deployment
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches:
+      - main
+
+env:
+  AWS_REGION: us-east-1                   
+  EKS_CLUSTER_NAME: aichatui-EKS-Cluster 
+  DEPLOYMENT_NAME: aichatui-deployment
+  
+permissions:
+  id-token: write   
+  contents: read   
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+          
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          
+      - name: Check Kubernetes connection
+        run: |
+          kubectl get nodes
+          
+      - name: Deploy to EKS
+        run: |
+
+          kubectl apply -f k8s/chatbot-ui.yaml
+          
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} --timeout=300s
+          
+      - name: Verify Deployment
+        run: |
+
+          kubectl get deployment ${{ env.DEPLOYMENT_NAME }} -o wide
+          
+          # Get service details (if you have a service)
+          kubectl get svc aichatui-service -o wide
+          
+      - name: Post Deployment Checks
+        run: |
+          # Check pods status
+          kubectl get pods -l app=aichatui
+          
+          # Get logs from the latest pod (adjust the label selector as needed)
+          POD_NAME=$(kubectl get pods -l app=aichatui -o jsonpath="{.items[0].metadata.name}")
+          kubectl logs $POD_NAME
+          
+    outputs:
+      service_url: ${{ steps.get_url.outputs.service_url }}
+          
+  notify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Notify Success
+        if: ${{ needs.deploy.result == 'success' }}
+        run: |
+          echo "Deployment successful!"
+          # Add notification logic (e.g., Slack, Email)
+          
+      - name: Notify Failure
+        if: ${{ needs.deploy.result == 'failure' }}
+        run: |
+          echo "Deployment failed!"
+          # Add notification logic (e.g., Slack, Email)
