@@ -100,10 +100,9 @@ pipeline {
                 script {
                     try {
                         sh '''
-                            # Save scan results
                             trivy image toluid/aichatui:latest > trivy-results.txt || true
                             
-                            # Print findings summary but continue pipeline
+
                             echo "Trivy Scan completed - See trivy-results.txt for details"
                             if grep -i 'vulnerability' trivy-results.txt > /dev/null; then
                                 echo "Note: Vulnerabilities were found but pipeline will continue"
@@ -124,7 +123,7 @@ pipeline {
                     sh '''
                         docker run -d --name aichatui -p 3000:3000 toluid/aichatui:latest
                         
-                        # Wait for container to be healthy
+
                         sleep 10
                         if ! docker ps | grep -q aichatui; then
                             echo "Container failed to start properly"
@@ -142,16 +141,16 @@ pipeline {
                     script {
                         withKubeConfig(credentialsId: 'k8s') {
                             sh '''
-                                # Verify kubectl configuration
+
                                 kubectl get nodes
                                 
-                                # Apply the deployment
+
                                 kubectl apply -f k8s/aichatui.yaml
                                 
-                                # Wait for deployment to be ready
+
                                 kubectl wait --for=condition=available deployment/aichatui --timeout=300s
                                 
-                                # Check deployment status
+
                                 kubectl get deployment aichatui
                             '''
                         }
