@@ -85,9 +85,22 @@ pipeline {
             steps {
                 script {
                     try {
-                        sh "trivy image toluid/aichatui:latest > trivy.json || true"
-                        def trivyResult = readJSON file: 'trivy.json'
-                        if (trivyResult.Vulnerabilities) {
+                        // Run Trivy scan and capture the exit code
+                        def scanResult = sh(
+                            script: "trivy image toluid/aichatui:latest || true",
+                            returnStatus: true
+                        )
+                        
+                        // Store the scan output in a file
+                        sh "trivy image toluid/aichatui:latest > trivy-results.txt || true"
+                        
+                        // Check if vulnerabilities were found
+                        def hasVulnerabilities = sh(
+                            script: "grep -i 'vulnerability' trivy-results.txt || true",
+                            returnStatus: true
+                        ) == 0
+                        
+                        if (hasVulnerabilities) {
                             unstable(message: 'Vulnerabilities found in Trivy scan')
                         }
                     } catch (Exception e) {
