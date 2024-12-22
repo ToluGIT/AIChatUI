@@ -1,0 +1,46 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aichatui
+  labels:
+    app: aichatui
+spec:
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: aichatui
+  template:
+    metadata:
+      labels:
+        app: aichatui
+    spec:
+      containers:
+      - name: aichatui
+        image: toluid/aichatui:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3000
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aichatui-service
+  labels:
+    app: aichatui
+spec:
+  selector:
+    app: aichatui
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+  type: LoadBalancer
