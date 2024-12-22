@@ -20,4 +20,5 @@ sudo mv ./kubectl /usr/local/bin
 sudo yum install -y yum-utils
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
 sudo yum -y install terraform
+sudo dnf install jq -y
 sudo docker run -d --name sonarqube -p 9000:9000 sonarqube:lts-community
