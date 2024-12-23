@@ -2,9 +2,9 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ github-workflow ]
+    branches: [ main ]
   pull_request:
-    branches: [ github-workflow ]
+    branches: [ main ]
 
 env:
   REGISTRY: docker.io
