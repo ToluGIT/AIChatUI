@@ -52,13 +52,19 @@ jobs:
           terraform_version: "1.5.0"
 
       - name: Terraform Init
-        id: init
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init -input=false -no-color \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=EKS/terraform.tfstate" \
-            -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
+              id: init
+              working-directory: ${{ env.TF_WORKING_DIR }}
+              run: |
+                # First try with reconfigure
+                terraform init -reconfigure -input=false -no-color \
+                  -backend-config="bucket=my-terraform-states-ai-chat-ui" \
+                  -backend-config="key=EKS/terraform.tfstate" \
+                  -backend-config="dynamodb_table=terraform-locks-ai-chat-ui" || \
+                # If that fails, try with migrate
+                terraform init -migrate-state -input=false -no-color \
+                  -backend-config="bucket=my-terraform-states-ai-chat-ui" \
+                  -backend-config="key=EKS/terraform.tfstate" \
+                  -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
         timeout-minutes: 3
 
       - name: Terraform Format Check
