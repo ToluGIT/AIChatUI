@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Required for SonarCloud
+          fetch-depth: 0
           
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -34,8 +34,19 @@ jobs:
         
       - name: Run NPM Security Audit
         run: |
-          npm audit --json > npm-audit.json || true
-          echo "NPM Audit completed and saved to npm-audit.json"
+          mkdir -p reports
+          npm audit --json > reports/npm-audit.json || true
+          echo "NPM Audit completed and saved to reports/npm-audit.json"
+          
+      - name: Upload NPM Audit Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-scan-results
+          path: |
+            reports/npm-audit.json
+            reports/dependency-check-report.*
+            trivy-fs-results.sarif
+            trivy-image-results.sarif
           
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
@@ -60,11 +71,12 @@ jobs:
             --disableNodeAudit
             --nvdApiKey '${{ secrets.NVD_API_KEY }}'
             --prettyPrint
+            --out ./reports
             
       - name: Upload Dependency Check results
         uses: github/codeql-action/upload-sarif@v2
         with:
-          sarif_file: 'dependency-check-report.sarif'
+          sarif_file: 'reports/dependency-check-report.sarif'
           
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
