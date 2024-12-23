@@ -64,7 +64,7 @@ jobs:
                   -backend-config="bucket=my-terraform-states-ai-chat-ui" \
                   -backend-config="key=EKS/terraform.tfstate" \
                   -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
-        timeout-minutes: 3
+
 
       - name: Terraform Format Check
         id: fmt
