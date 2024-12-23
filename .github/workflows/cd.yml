@@ -6,7 +6,7 @@ on:
     types:
       - completed
     branches:
-      - github-workflow
+      - main
 
 env:
   AWS_REGION: us-east-1                   
