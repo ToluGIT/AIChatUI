@@ -1,147 +1,141 @@
-name: Terraform EKS Provisioning
+name: Terraform EKS Workflow
 
 on:
- workflow_dispatch:
-   inputs:
-     terraform_action:
-       description: 'Terraform action to perform'
-       required: true
-       default: 'apply'
-       type: choice
-       options:
-         - apply
-         - destroy
-     environment:
-       description: 'Environment to deploy to'
-       required: true
-       default: 'development'
-       type: choice
-       options:
-         - development
-         - staging
-         - production
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      destroy:
+        description: "Run terraform destroy"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 env:
- AWS_REGION: us-east-1
- TF_WORKING_DIR: EKS-TF
- TF_LOG: INFO
+  TF_LOG: INFO
+  AWS_REGION: us-east-1
+  TF_WORKING_DIR: EKS-TF
 
 permissions:
- contents: read
- id-token: write
+  contents: read
+  security-events: write
+  id-token: write
 
 jobs:
- terraform:
-   runs-on: ubuntu-latest
-   timeout-minutes: 30
-   
-   steps:
-     - name: Checkout Repository
-       uses: actions/checkout@v3
+  terraform:
+    if: github.event.inputs.destroy != 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-     - name: Configure AWS Credentials
-       uses: aws-actions/configure-aws-credentials@v2
-       with:
-         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-         aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
 
-     - name: Setup Terraform
-       uses: hashicorp/setup-terraform@v2
-       with:
-         terraform_version: "1.5.0"
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
 
-     - name: Terraform Init
-       id: init
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: |
-         # First try with reconfigure
-         terraform init -reconfigure -input=false -no-color \
-           -backend-config="bucket=my-terraform-states-ai-chat-ui" \
-           -backend-config="key=EKS/terraform.tfstate" \
-           -backend-config="dynamodb_table=terraform-locks-ai-chat-ui" || \
-         # If that fails, try with migrate
-         terraform init -migrate-state -input=false -no-color \
-           -backend-config="bucket=my-terraform-states-ai-chat-ui" \
-           -backend-config="key=EKS/terraform.tfstate" \
-           -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
+      - name: Run Checkov Security Scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+        continue-on-error: true
 
-     - name: Terraform Format Check
-       id: fmt
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: terraform fmt -check
-       continue-on-error: true
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
 
-     - name: Terraform Validate
-       id: validate
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: terraform validate
-       
-     - name: Terraform Plan
-       id: plan
-       if: github.event.inputs.terraform_action == 'apply'
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: |
-         terraform plan -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
-         echo "Plan completed"
-       continue-on-error: true
+      - name: Upload Checkov Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: results.sarif
 
-     - name: Terraform Plan Destroy
-       id: plan-destroy
-       if: github.event.inputs.terraform_action == 'destroy'
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: |
-         terraform plan -destroy -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
-         echo "Destroy plan completed"
-       continue-on-error: true
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="bucket=my-terraform-states-ai-chat-ui" \
+            -backend-config="key=EKS/terraform.tfstate" \
+            -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
 
-     - name: Terraform Plan Status
-       if: steps.plan.outcome == 'failure' || steps.plan-destroy.outcome == 'failure'
-       run: |
-         echo "Terraform plan failed"
-         exit 1
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check
+        continue-on-error: true
 
-     - name: Terraform Apply
-       id: apply
-       if: github.event.inputs.terraform_action == 'apply' && steps.plan.outcome == 'success'
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: |
-         terraform apply -input=false -no-color -auto-approve tfplan
-       timeout-minutes: 20
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -out=tfplan
 
-     - name: Terraform Destroy
-       id: destroy
-       if: github.event.inputs.terraform_action == 'destroy' && steps.plan-destroy.outcome == 'success'
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: |
-         terraform apply -input=false -no-color -auto-approve tfplan
-       timeout-minutes: 20
+      - name: Terraform Apply
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan
 
-     - name: Export EKS Cluster Info
-       id: export-cluster-info
-       if: github.event.inputs.terraform_action == 'apply' && steps.apply.outcome == 'success'
-       working-directory: ${{ env.TF_WORKING_DIR }}
-       run: |
-         CLUSTER_NAME=$(terraform output -raw cluster-name 2>/dev/null || echo "")
-         CLUSTER_ENDPOINT=$(terraform output -raw cluster-endpoint 2>/dev/null || echo "")
-         
-         if [ -n "$CLUSTER_NAME" ] && [ -n "$CLUSTER_ENDPOINT" ]; then
-           echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
-           echo "cluster_endpoint=${CLUSTER_ENDPOINT}" >> $GITHUB_OUTPUT
-           echo "EKS_CLUSTER_NAME=${CLUSTER_NAME}" >> $GITHUB_ENV
-           echo "EKS_CLUSTER_ENDPOINT=${CLUSTER_ENDPOINT}" >> $GITHUB_ENV
-           echo "Successfully exported cluster information"
-         else
-           echo "Warning: Could not retrieve cluster information from Terraform outputs"
-         fi
+      - name: Export EKS Cluster Info
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          CLUSTER_NAME=$(terraform output -raw cluster-name 2>/dev/null || echo "")
+          CLUSTER_ENDPOINT=$(terraform output -raw cluster-endpoint 2>/dev/null || echo "")
+          
+          if [ -n "$CLUSTER_NAME" ] && [ -n "$CLUSTER_ENDPOINT" ]; then
+            echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
+            echo "cluster_endpoint=${CLUSTER_ENDPOINT}" >> $GITHUB_OUTPUT
+            echo "Successfully exported cluster information"
+          else
+            echo "Warning: Could not retrieve cluster information from Terraform outputs"
+          fi
 
-     - name: Upload Terraform Plan
-       if: always()
-       uses: actions/upload-artifact@v3
-       with:
-         name: terraform-plan
-         path: ${{ env.TF_WORKING_DIR }}/plan.txt
-         retention-days: 5
+  terraform-destroy:
+    if: github.event.inputs.destroy == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-   outputs:
-     cluster_name: ${{ steps.export-cluster-info.outputs.cluster_name }}
-     cluster_endpoint: ${{ steps.export-cluster-info.outputs.cluster_endpoint }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="bucket=my-terraform-states-ai-chat-ui" \
+            -backend-config="key=EKS/terraform.tfstate" \
+            -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
+
+      - name: Terraform Destroy
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform destroy -auto-approve
