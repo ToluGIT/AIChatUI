@@ -83,33 +83,28 @@ jobs:
           echo "DynamoDB Table Check:"
           aws dynamodb describe-table --table-name terraform-locks-ai-chat-ui || echo "Table not accessible"
 
-      - name: Create tfvars and backend config
+      - name: Create tfvars
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          # Create backend override
-          cat > backend_override.hcl << EOF
-          backend "s3" {
-            bucket         = "my-terraform-states-ai-chat-ui"
-            region         = "us-east-1"
-            key            = "EKS/terraform.tfstate"
-            dynamodb_table = "terraform-locks-ai-chat-ui"
-            encrypt        = true
-          }
-          EOF
-
-          # Create tfvars
           cat > terraform.tfvars << EOF
           aws_region      = "us-east-1"
           project_name    = "aichatui-eks-cluster"
           cluster_version = "1.31"
           vpc_cidr        = "10.0.0.0/16"
           EOF
-          
+
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           rm -rf .terraform .terraform.lock.hcl
-          terraform init -backend-config=backend_override.hcl -reconfigure
+          terraform init \
+            -reconfigure \
+            -backend=true \
+            -backend-config="bucket=my-terraform-states-ai-chat-ui" \
+            -backend-config="region=us-east-1" \
+            -backend-config="key=EKS/terraform.tfstate" \
+            -backend-config="dynamodb_table=terraform-locks-ai-chat-ui" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Plan
         working-directory: ${{ env.TF_WORKING_DIR }}
