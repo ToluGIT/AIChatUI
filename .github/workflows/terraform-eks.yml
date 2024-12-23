@@ -71,11 +71,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init \
-            -backend-config="bucket=my-terraform-states-ai-chat-ui" \
-            -backend-config="key=EKS/terraform.tfstate" \
-            -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
+        run: terraform init 
 
       - name: Terraform Format Check
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -130,11 +126,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init \
-            -backend-config="bucket=my-terraform-states-ai-chat-ui" \
-            -backend-config="key=EKS/terraform.tfstate" \
-            -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
+        run: terraform init 
 
       - name: Terraform Destroy
         working-directory: ${{ env.TF_WORKING_DIR }}
