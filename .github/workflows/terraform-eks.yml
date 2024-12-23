@@ -1,148 +1,147 @@
 name: Terraform EKS Provisioning
 
 on:
-  workflow_dispatch:
-    inputs:
-      terraform_action:
-        description: 'Terraform action to perform'
-        required: true
-        default: 'apply'
-        type: choice
-        options:
-          - apply
-          - destroy
-      environment:
-        description: 'Environment to deploy to'
-        required: true
-        default: 'development'
-        type: choice
-        options:
-          - development
-          - staging
-          - production
+ workflow_dispatch:
+   inputs:
+     terraform_action:
+       description: 'Terraform action to perform'
+       required: true
+       default: 'apply'
+       type: choice
+       options:
+         - apply
+         - destroy
+     environment:
+       description: 'Environment to deploy to'
+       required: true
+       default: 'development'
+       type: choice
+       options:
+         - development
+         - staging
+         - production
 
 env:
-  AWS_REGION: us-east-1
-  TF_WORKING_DIR: EKS-TF
-  TF_LOG: INFO
+ AWS_REGION: us-east-1
+ TF_WORKING_DIR: EKS-TF
+ TF_LOG: INFO
 
 permissions:
-  contents: read
-  id-token: write
+ contents: read
+ id-token: write
 
 jobs:
-  terraform:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+ terraform:
+   runs-on: ubuntu-latest
+   timeout-minutes: 30
+   
+   steps:
+     - name: Checkout Repository
+       uses: actions/checkout@v3
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+     - name: Configure AWS Credentials
+       uses: aws-actions/configure-aws-credentials@v2
+       with:
+         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+         aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: "1.5.0"
+     - name: Setup Terraform
+       uses: hashicorp/setup-terraform@v2
+       with:
+         terraform_version: "1.5.0"
 
-      - name: Terraform Init
-              id: init
-              working-directory: ${{ env.TF_WORKING_DIR }}
-              run: |
-                # First try with reconfigure
-                terraform init -reconfigure -input=false -no-color \
-                  -backend-config="bucket=my-terraform-states-ai-chat-ui" \
-                  -backend-config="key=EKS/terraform.tfstate" \
-                  -backend-config="dynamodb_table=terraform-locks-ai-chat-ui" || \
-                # If that fails, try with migrate
-                terraform init -migrate-state -input=false -no-color \
-                  -backend-config="bucket=my-terraform-states-ai-chat-ui" \
-                  -backend-config="key=EKS/terraform.tfstate" \
-                  -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
+     - name: Terraform Init
+       id: init
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: |
+         # First try with reconfigure
+         terraform init -reconfigure -input=false -no-color \
+           -backend-config="bucket=my-terraform-states-ai-chat-ui" \
+           -backend-config="key=EKS/terraform.tfstate" \
+           -backend-config="dynamodb_table=terraform-locks-ai-chat-ui" || \
+         # If that fails, try with migrate
+         terraform init -migrate-state -input=false -no-color \
+           -backend-config="bucket=my-terraform-states-ai-chat-ui" \
+           -backend-config="key=EKS/terraform.tfstate" \
+           -backend-config="dynamodb_table=terraform-locks-ai-chat-ui"
 
+     - name: Terraform Format Check
+       id: fmt
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: terraform fmt -check
+       continue-on-error: true
 
-      - name: Terraform Format Check
-        id: fmt
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform fmt -check
-        continue-on-error: true
+     - name: Terraform Validate
+       id: validate
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: terraform validate
+       
+     - name: Terraform Plan
+       id: plan
+       if: github.event.inputs.terraform_action == 'apply'
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: |
+         terraform plan -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
+         echo "Plan completed"
+       continue-on-error: true
 
-      - name: Terraform Validate
-        id: validate
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform validate
-        
-      - name: Terraform Plan
-        id: plan
-        if: github.event.inputs.terraform_action == 'apply'
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform plan -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
-          echo "Plan completed"
-        continue-on-error: true
+     - name: Terraform Plan Destroy
+       id: plan-destroy
+       if: github.event.inputs.terraform_action == 'destroy'
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: |
+         terraform plan -destroy -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
+         echo "Destroy plan completed"
+       continue-on-error: true
 
-      - name: Terraform Plan Destroy
-        id: plan-destroy
-        if: github.event.inputs.terraform_action == 'destroy'
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform plan -destroy -input=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
-          echo "Destroy plan completed"
-        continue-on-error: true
+     - name: Terraform Plan Status
+       if: steps.plan.outcome == 'failure' || steps.plan-destroy.outcome == 'failure'
+       run: |
+         echo "Terraform plan failed"
+         exit 1
 
-      - name: Terraform Plan Status
-        if: steps.plan.outcome == 'failure' || steps.plan-destroy.outcome == 'failure'
-        run: |
-          echo "Terraform plan failed"
-          exit 1
+     - name: Terraform Apply
+       id: apply
+       if: github.event.inputs.terraform_action == 'apply' && steps.plan.outcome == 'success'
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: |
+         terraform apply -input=false -no-color -auto-approve tfplan
+       timeout-minutes: 20
 
-      - name: Terraform Apply
-        id: apply
-        if: github.event.inputs.terraform_action == 'apply' && steps.plan.outcome == 'success'
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform apply -input=false -no-color -auto-approve tfplan
-        timeout-minutes: 20
+     - name: Terraform Destroy
+       id: destroy
+       if: github.event.inputs.terraform_action == 'destroy' && steps.plan-destroy.outcome == 'success'
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: |
+         terraform apply -input=false -no-color -auto-approve tfplan
+       timeout-minutes: 20
 
-      - name: Terraform Destroy
-        id: destroy
-        if: github.event.inputs.terraform_action == 'destroy' && steps.plan-destroy.outcome == 'success'
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform apply -input=false -no-color -auto-approve tfplan
-        timeout-minutes: 20
+     - name: Export EKS Cluster Info
+       id: export-cluster-info
+       if: github.event.inputs.terraform_action == 'apply' && steps.apply.outcome == 'success'
+       working-directory: ${{ env.TF_WORKING_DIR }}
+       run: |
+         CLUSTER_NAME=$(terraform output -raw cluster-name 2>/dev/null || echo "")
+         CLUSTER_ENDPOINT=$(terraform output -raw cluster-endpoint 2>/dev/null || echo "")
+         
+         if [ -n "$CLUSTER_NAME" ] && [ -n "$CLUSTER_ENDPOINT" ]; then
+           echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
+           echo "cluster_endpoint=${CLUSTER_ENDPOINT}" >> $GITHUB_OUTPUT
+           echo "EKS_CLUSTER_NAME=${CLUSTER_NAME}" >> $GITHUB_ENV
+           echo "EKS_CLUSTER_ENDPOINT=${CLUSTER_ENDPOINT}" >> $GITHUB_ENV
+           echo "Successfully exported cluster information"
+         else
+           echo "Warning: Could not retrieve cluster information from Terraform outputs"
+         fi
 
-      - name: Export EKS Cluster Info
-        id: export-cluster-info
-        if: github.event.inputs.terraform_action == 'apply' && steps.apply.outcome == 'success'
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          CLUSTER_NAME=$(terraform output -raw cluster-name 2>/dev/null || echo "")
-          CLUSTER_ENDPOINT=$(terraform output -raw cluster-endpoint 2>/dev/null || echo "")
-          
-          if [ -n "$CLUSTER_NAME" ] && [ -n "$CLUSTER_ENDPOINT" ]; then
-            echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
-            echo "cluster_endpoint=${CLUSTER_ENDPOINT}" >> $GITHUB_OUTPUT
-            echo "EKS_CLUSTER_NAME=${CLUSTER_NAME}" >> $GITHUB_ENV
-            echo "EKS_CLUSTER_ENDPOINT=${CLUSTER_ENDPOINT}" >> $GITHUB_ENV
-            echo "Successfully exported cluster information"
-          else
-            echo "Warning: Could not retrieve cluster information from Terraform outputs"
-          fi
+     - name: Upload Terraform Plan
+       if: always()
+       uses: actions/upload-artifact@v3
+       with:
+         name: terraform-plan
+         path: ${{ env.TF_WORKING_DIR }}/plan.txt
+         retention-days: 5
 
-      - name: Upload Terraform Plan
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: terraform-plan
-          path: ${{ env.TF_WORKING_DIR }}/plan.txt
-          retention-days: 5
-
-    outputs:
-      cluster_name: ${{ steps.export-cluster-info.outputs.cluster_name }}
-      cluster_endpoint: ${{ steps.export-cluster-info.outputs.cluster_endpoint }}
+   outputs:
+     cluster_name: ${{ steps.export-cluster-info.outputs.cluster_name }}
+     cluster_endpoint: ${{ steps.export-cluster-info.outputs.cluster_endpoint }}
