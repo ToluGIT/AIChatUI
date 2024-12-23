@@ -69,9 +69,33 @@ jobs:
           name: checkov-report
           path: results.sarif
 
+      - name: Debug Environment
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          echo "Working Directory Contents:"
+          ls -la
+          echo "Backend Configuration:"
+          cat backend.tf
+          echo "AWS Credentials Check:"
+          aws sts get-caller-identity
+          echo "S3 Bucket Check:"
+          aws s3 ls s3://my-terraform-states-ai-chat-ui || echo "Bucket not accessible"
+          echo "DynamoDB Table Check:"
+          aws dynamodb describe-table --table-name terraform-locks-ai-chat-ui || echo "Table not accessible"
+
+      - name: Create tfvars
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          cat > terraform.tfvars << EOF
+          aws_region      = "us-east-1"
+          project_name    = "aichatui"
+          cluster_version = "1.31"
+          vpc_cidr        = "10.0.0.0/16"
+          EOF
+
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -reconfigure
+        run: terraform init -reconfigure -backend=true
 
       - name: Terraform Format Check
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -124,9 +148,19 @@ jobs:
         with:
           terraform_version: "1.5.0"
 
+      - name: Create tfvars
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          cat > terraform.tfvars << EOF
+          aws_region      = "us-east-1"
+          project_name    = "aichatui"
+          cluster_version = "1.31"
+          vpc_cidr        = "10.0.0.0/16"
+          EOF
+
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init 
+        run: terraform init -reconfigure -backend=true
 
       - name: Terraform Destroy
         working-directory: ${{ env.TF_WORKING_DIR }}
