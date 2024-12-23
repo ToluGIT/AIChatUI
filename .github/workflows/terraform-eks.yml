@@ -1,4 +1,4 @@
-name: Terraform EKS Workflow
+name: Terraform EKS Provisioning
 
 on:
   push:
@@ -9,19 +9,21 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      destroy:
-        description: "Run terraform destroy"
-        required: false
-        default: "false"
+      terraform_action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'apply'
         type: choice
         options:
-          - "true"
-          - "false"
+          - apply
+          - destroy
 
 env:
-  TF_LOG: INFO
   AWS_REGION: us-east-1
   TF_WORKING_DIR: EKS-TF
+  TF_LOG: INFO
+  TIMEOUT_MINUTES: 30
+  CLUSTER_NAME: aichatui-EKS-Cluster
 
 permissions:
   contents: read
@@ -30,8 +32,8 @@ permissions:
 
 jobs:
   terraform:
-    if: github.event.inputs.destroy != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(env.TIMEOUT_MINUTES) }}
     
     steps:
       - name: Checkout Repository
@@ -47,7 +49,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.5.7"
+          terraform_version: "1.9.0"
 
       - name: Run Checkov Security Scan
         uses: bridgecrewio/checkov-action@v12
@@ -62,12 +64,6 @@ jobs:
         if: always()
         with:
           sarif_file: results.sarif
-
-      - name: Upload Checkov Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: checkov-report
-          path: results.sarif
 
       - name: Debug Environment
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -88,12 +84,13 @@ jobs:
         run: |
           cat > terraform.tfvars << EOF
           aws_region      = "us-east-1"
-          project_name    = "aichatui-eks-cluster"
+          project_name    = "${{ env.CLUSTER_NAME }}"
           cluster_version = "1.31"
           vpc_cidr        = "10.0.0.0/16"
           EOF
 
       - name: Terraform Init
+        id: init
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           rm -rf .terraform .terraform.lock.hcl
@@ -105,18 +102,49 @@ jobs:
             -backend-config="key=EKS/terraform.tfstate" \
             -backend-config="dynamodb_table=terraform-locks-ai-chat-ui" \
             -backend-config="encrypt=true"
+        timeout-minutes: 3
 
       - name: Terraform Plan
+        id: plan
+        if: github.event.inputs.terraform_action != 'destroy'
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -var-file=terraform.tfvars -out=tfplan
+        run: |
+          terraform plan -var-file=terraform.tfvars -out=tfplan
+          echo "Plan completed"
+        continue-on-error: true
+
+      - name: Terraform Plan Destroy
+        id: plan-destroy
+        if: github.event.inputs.terraform_action == 'destroy'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan -destroy -var-file=terraform.tfvars -out=tfplan
+          echo "Destroy plan completed"
+        continue-on-error: true
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure' || steps.plan-destroy.outcome == 'failure'
+        run: |
+          echo "Terraform plan failed"
+          exit 1
 
       - name: Terraform Apply
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        id: apply
+        if: github.event.inputs.terraform_action == 'apply' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
+        timeout-minutes: 20
+
+      - name: Terraform Destroy
+        id: destroy
+        if: github.event.inputs.terraform_action == 'destroy'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan
+        timeout-minutes: 20
 
       - name: Export EKS Cluster Info
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        id: export-cluster-info
+        if: github.event.inputs.terraform_action == 'apply' && steps.apply.outcome == 'success'
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           CLUSTER_NAME=$(terraform output -raw cluster-name 2>/dev/null || echo "")
@@ -130,42 +158,14 @@ jobs:
             echo "Warning: Could not retrieve cluster information from Terraform outputs"
           fi
 
-  terraform-destroy:
-    if: github.event.inputs.destroy == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Upload Terraform Plan
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          audience: sts.amazonaws.com
+          name: terraform-plan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 5
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.5.0"
-
-      - name: Create tfvars
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          cat > terraform.tfvars << EOF
-          aws_region      = "us-east-1"
-          project_name    = "aichatui"
-          cluster_version = "1.31"
-          vpc_cidr        = "10.0.0.0/16"
-          EOF
-
-      - name: Terraform Init
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -reconfigure -backend=true
-
-      - name: Terraform Destroy
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform destroy -auto-approve
+    outputs:
+      cluster_name: ${{ steps.export-cluster-info.outputs.cluster_name }}
+      cluster_endpoint: ${{ steps.export-cluster-info.outputs.cluster_endpoint }}
