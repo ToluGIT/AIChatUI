@@ -11,7 +11,7 @@ on:
 env:
   AWS_REGION: us-east-1                   
   EKS_CLUSTER_NAME: aichatui-EKS-Cluster 
-  DEPLOYMENT_NAME: aichatui-deployment
+  DEPLOYMENT_NAME: aichatui
   
 permissions:
   id-token: write   
